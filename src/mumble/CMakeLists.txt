@@ -49,6 +49,7 @@ elseif(UNIX)
 		option(pipewire "Build support for PipeWire." ON)
 		option(pulseaudio "Build support for PulseAudio." ON)
 		option(speechd "Build support for Speech Dispatcher." ON)
+		option(screenshare "Build support for screen sharing (Linux/Wayland only)." OFF)
 	endif()
 
 	option(dbus "Enable DBus support/interface" ON)
@@ -1080,6 +1081,29 @@ if(pipewire)
 	)
 
 	target_compile_definitions(mumble_client_object_lib PUBLIC "USE_PIPEWIRE")
+	target_include_directories(mumble_client_object_lib SYSTEM PUBLIC "${3RDPARTY_DIR}/pipewire")
+endif()
+
+if(screenshare)
+	find_package(PkgConfig REQUIRED)
+	pkg_check_modules(VPX REQUIRED IMPORTED_TARGET vpx)
+
+	target_sources(mumble_client_object_lib
+		PRIVATE
+			"ScreenShareCapture.cpp"
+			"ScreenShareCapture.h"
+			"ScreenShareEncoder.cpp"
+			"ScreenShareEncoder.h"
+			"ScreenShareDecoder.cpp"
+			"ScreenShareDecoder.h"
+			"ScreenShareManager.cpp"
+			"ScreenShareManager.h"
+			"ScreenShareViewer.cpp"
+			"ScreenShareViewer.h"
+	)
+
+	target_compile_definitions(mumble_client_object_lib PUBLIC "USE_SCREENSHARE")
+	target_link_libraries(mumble_client_object_lib PUBLIC PkgConfig::VPX)
 	target_include_directories(mumble_client_object_lib SYSTEM PUBLIC "${3RDPARTY_DIR}/pipewire")
 endif()
 

@@ -42,6 +42,7 @@ class UserInformation;
 class VoiceRecorderDialog;
 class PositionalAudioViewer;
 class PTTButtonWidget;
+class ScreenShareManager;
 
 namespace Search {
 class SearchDialog;
@@ -190,6 +191,11 @@ protected:
 	QMap< unsigned int, UserInformation * > qmUserInformations;
 
 	std::unique_ptr< PositionalAudioViewer > m_paViewer;
+
+#ifdef USE_SCREENSHARE
+	ScreenShareManager *m_screenShareManager = nullptr;
+	QAction *qaScreenShare                   = nullptr;
+#endif
 
 	PTTButtonWidget *qwPTTButtonWidget;
 
@@ -362,6 +368,11 @@ public slots:
 
 	void on_Reconnect_timeout();
 	void on_qaTalkingUIToggle_triggered();
+#ifdef USE_SCREENSHARE
+	void toggleScreenShare();
+	void onScreenShareSharingStarted();
+	void onScreenShareSharingStopped();
+#endif
 	void voiceRecorderDialog_finished(int);
 	void qtvUserCurrentChanged(const QModelIndex &, const QModelIndex &);
 	void serverConnected();

@@ -2556,6 +2556,50 @@ void Server::msgPluginDataTransmission(ServerUser *sender, MumbleProto::PluginDa
 	}
 }
 
+void Server::msgScreenShare(ServerUser *uSource, MumbleProto::ScreenShare &msg) {
+	MSG_SETUP(ServerUser::Authenticated);
+
+	if (!msg.has_active()) {
+		return;
+	}
+
+	// Enforce sender session (prevent spoofing)
+	msg.set_session(uSource->uiSession);
+
+	// Broadcast to all users in the sender's channel (except the sender)
+	Channel *c = uSource->cChannel;
+	if (c) {
+		for (User *p : c->qlUsers) {
+			ServerUser *su = static_cast< ServerUser * >(p);
+			if (su != uSource) {
+				sendMessage(su, msg);
+			}
+		}
+	}
+}
+
+void Server::msgScreenShareFrame(ServerUser *uSource, MumbleProto::ScreenShareFrame &msg) {
+	MSG_SETUP_NO_UNIDLE(ServerUser::Authenticated);
+
+	if (!msg.has_frame_data() || msg.frame_data().empty()) {
+		return;
+	}
+
+	// Enforce sender session
+	msg.set_session(uSource->uiSession);
+
+	// Relay to all users in the sender's channel (except the sender)
+	Channel *c = uSource->cChannel;
+	if (c) {
+		for (User *p : c->qlUsers) {
+			ServerUser *su = static_cast< ServerUser * >(p);
+			if (su != uSource) {
+				sendMessage(su, msg);
+			}
+		}
+	}
+}
+
 #undef RATELIMIT
 #undef MSG_SETUP
 #undef MSG_SETUP_NO_UNIDLE

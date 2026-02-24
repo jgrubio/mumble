@@ -637,3 +637,35 @@ message PluginDataTransmission {
 	// process it or not
 	optional string dataID = 4;
 }
+
+// Control message: notifies start/stop of screen sharing
+message ScreenShare {
+	// Session of the user sharing their screen.
+	optional uint32 session = 1;
+	// True if sharing started, false if stopped.
+	optional bool active = 2;
+	// Width of the shared stream.
+	optional uint32 width = 3;
+	// Height of the shared stream.
+	optional uint32 height = 4;
+	// Frames per second of the shared stream.
+	optional uint32 fps = 5;
+}
+
+// Data message: a single VP8-encoded video frame
+message ScreenShareFrame {
+	// Session of the user sending the frame.
+	optional uint32 session = 1;
+	// Sequence number for ordering.
+	optional uint64 frame_number = 2;
+	// VP8-encoded frame data.
+	optional bytes frame_data = 3;
+	// True if this is a keyframe (I-frame).
+	optional bool is_keyframe = 4;
+	// Width of this frame.
+	optional uint32 width = 5;
+	// Height of this frame.
+	optional uint32 height = 6;
+	// Timestamp in milliseconds.
+	optional uint64 timestamp = 7;
+}

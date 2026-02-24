@@ -24,6 +24,9 @@
 #ifdef USE_OVERLAY
 #	include "Overlay.h"
 #endif
+#ifdef USE_SCREENSHARE
+#	include "ScreenShareManager.h"
+#endif
 #include "ChannelListenerManager.h"
 #include "PluginManager.h"
 #include "ProtoUtils.h"
@@ -1293,6 +1296,45 @@ void MainWindow::msgPluginDataTransmission(const MumbleProto::PluginDataTransmis
 		Global::get().pluginManager->on_receiveData(sender, reinterpret_cast< const uint8_t * >(msgData.c_str()),
 													msgData.size(), msg.dataid().c_str());
 	}
+}
+
+void MainWindow::msgScreenShare(const MumbleProto::ScreenShare &msg) {
+#ifdef USE_SCREENSHARE
+	if (!msg.has_session()) {
+		return;
+	}
+
+	ClientUser *u = ClientUser::get(msg.session());
+	if (!u) {
+		return;
+	}
+
+	if (msg.active()) {
+		m_screenShareManager->startViewing(u, msg.width(), msg.height());
+	} else {
+		m_screenShareManager->stopViewing(u);
+	}
+#else
+	Q_UNUSED(msg);
+#endif
+}
+
+void MainWindow::msgScreenShareFrame(const MumbleProto::ScreenShareFrame &msg) {
+#ifdef USE_SCREENSHARE
+	if (!msg.has_session()) {
+		return;
+	}
+
+	ClientUser *u = ClientUser::get(msg.session());
+	if (!u) {
+		return;
+	}
+
+	QByteArray data(msg.frame_data().data(), static_cast< int >(msg.frame_data().size()));
+	m_screenShareManager->receiveFrame(u, data, msg.is_keyframe(), msg.frame_number());
+#else
+	Q_UNUSED(msg);
+#endif
 }
 
 #undef ACTOR_INIT

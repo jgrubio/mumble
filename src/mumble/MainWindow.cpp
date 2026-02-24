@@ -27,6 +27,9 @@
 #ifdef USE_OVERLAY
 #	include "OverlayClient.h"
 #endif
+#ifdef USE_SCREENSHARE
+#	include "ScreenShareManager.h"
+#endif
 #include "../SignalCurry.h"
 #include "ChannelListenerManager.h"
 #include "FailedConnectionDialog.h"
@@ -166,6 +169,10 @@ MainWindow::MainWindow(QWidget *p)
 
 	qaEmpty = new QAction(tr("No action available..."), this);
 	qaEmpty->setEnabled(false);
+
+#ifdef USE_SCREENSHARE
+	m_screenShareManager = new ScreenShareManager(this);
+#endif
 
 	createActions();
 	setupUi(this);
@@ -1628,6 +1635,22 @@ void MainWindow::on_qmSelf_aboutToShow() {
 		qaSelfPrioritySpeaker->setEnabled(false);
 		qaSelfPrioritySpeaker->setChecked(false);
 	}
+
+#ifdef USE_SCREENSHARE
+	if (!qaScreenShare) {
+		qaScreenShare = new QAction(tr("Share Screen"), this);
+		qaScreenShare->setCheckable(true);
+		connect(qaScreenShare, &QAction::triggered, this, &MainWindow::toggleScreenShare);
+		connect(m_screenShareManager, &ScreenShareManager::sharingStarted, this,
+				&MainWindow::onScreenShareSharingStarted);
+		connect(m_screenShareManager, &ScreenShareManager::sharingStopped, this,
+				&MainWindow::onScreenShareSharingStopped);
+		qmSelf->addSeparator();
+		qmSelf->addAction(qaScreenShare);
+	}
+	qaScreenShare->setEnabled(user != nullptr);
+	qaScreenShare->setChecked(m_screenShareManager->isSharing());
+#endif
 }
 
 void MainWindow::on_qaSelfComment_triggered() {
@@ -4300,3 +4323,29 @@ void MainWindow::showImageDialog() {
 		}
 	}
 }
+
+#ifdef USE_SCREENSHARE
+void MainWindow::toggleScreenShare() {
+	qWarning("MainWindow::toggleScreenShare() called, isSharing=%d", m_screenShareManager->isSharing());
+	if (m_screenShareManager->isSharing()) {
+		m_screenShareManager->stopSharing();
+	} else {
+		m_screenShareManager->startSharing();
+	}
+	qWarning("MainWindow::toggleScreenShare() done");
+}
+
+void MainWindow::onScreenShareSharingStarted() {
+	if (qaScreenShare) {
+		qaScreenShare->setChecked(true);
+		qaScreenShare->setText(tr("Stop Sharing"));
+	}
+}
+
+void MainWindow::onScreenShareSharingStopped() {
+	if (qaScreenShare) {
+		qaScreenShare->setChecked(false);
+		qaScreenShare->setText(tr("Share Screen"));
+	}
+}
+#endif
