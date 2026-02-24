@@ -16,7 +16,11 @@
 
 #include <cstdint>
 
+#include <spa/utils/hook.h>
+
 struct pw_buffer;
+struct pw_context;
+struct pw_core;
 struct pw_loop;
 struct pw_properties;
 struct pw_stream;
@@ -76,9 +80,12 @@ private:
 
 	// PipeWire
 	pw_loop *m_pwLoop            = nullptr;
+	pw_context *m_pwContext       = nullptr;
+	pw_core *m_pwCore             = nullptr;
 	pw_stream *m_pwStream        = nullptr;
 	pw_thread_loop *m_pwThread   = nullptr;
 	pw_stream_events *m_pwEvents = nullptr;
+	spa_hook m_pwStreamHook      = {};
 	int m_pwFd                   = -1;
 
 	// Frame timer for FPS control

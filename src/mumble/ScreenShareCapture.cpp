@@ -16,6 +16,8 @@
 #include <QImage>
 #include <QMutexLocker>
 
+#include <pipewire/context.h>
+#include <pipewire/core.h>
 #include <pipewire/keys.h>
 #include <pipewire/stream.h>
 
@@ -135,6 +137,14 @@ struct PipeWireFuncs {
 							 const spa_pod **params, uint32_t n_params)                             = nullptr;
 	pw_buffer *(*pw_stream_dequeue_buffer)(pw_stream *stream)                                       = nullptr;
 	int (*pw_stream_queue_buffer)(pw_stream *stream, pw_buffer *buffer)                             = nullptr;
+	pw_context *(*pw_context_new)(pw_loop *main_loop, pw_properties *props, size_t user_data_size)  = nullptr;
+	void (*pw_context_destroy)(pw_context *context)                                                 = nullptr;
+	pw_core *(*pw_context_connect_fd)(pw_context *context, int fd, pw_properties *props,
+									  size_t user_data_size)                                        = nullptr;
+	int (*pw_core_disconnect)(pw_core *core)                                                        = nullptr;
+	pw_stream *(*pw_stream_new)(pw_core *core, const char *name, pw_properties *props)              = nullptr;
+	void (*pw_stream_add_listener)(pw_stream *stream, spa_hook *listener,
+								   const pw_stream_events *events, void *data)                      = nullptr;
 
 	bool load() {
 		const QStringList names{ "libpipewire.so", "libpipewire-0.3.so", "libpipewire-0.3.so.0" };
@@ -166,6 +176,12 @@ struct PipeWireFuncs {
 		RESOLVE_PW(pw_stream_connect);
 		RESOLVE_PW(pw_stream_dequeue_buffer);
 		RESOLVE_PW(pw_stream_queue_buffer);
+		RESOLVE_PW(pw_context_new);
+		RESOLVE_PW(pw_context_destroy);
+		RESOLVE_PW(pw_context_connect_fd);
+		RESOLVE_PW(pw_core_disconnect);
+		RESOLVE_PW(pw_stream_new);
+		RESOLVE_PW(pw_stream_add_listener);
 
 #undef RESOLVE_PW
 
@@ -437,19 +453,39 @@ bool ScreenShareCapture::setupPipeWireStream(uint32_t nodeId) {
 		return false;
 	}
 
+	// Create a PipeWire context and connect using the portal's FD.
+	// The portal FD grants access to the screen capture node that the
+	// compositor created for this session — it is NOT reachable via the
+	// default PipeWire connection.
+	m_pwContext = s_pw.pw_context_new(m_pwLoop, nullptr, 0);
+	if (!m_pwContext) {
+		qWarning("ScreenShareCapture: Failed to create PipeWire context");
+		return false;
+	}
+
+	m_pwCore = s_pw.pw_context_connect_fd(m_pwContext, m_pwFd, nullptr, 0);
+	if (!m_pwCore) {
+		qWarning("ScreenShareCapture: Failed to connect PipeWire FD");
+		return false;
+	}
+	m_pwFd = -1; // FD ownership transferred to PipeWire core
+
 	pw_properties *props = s_pw.pw_properties_new(PW_KEY_APP_NAME, "Mumble", PW_KEY_MEDIA_TYPE, "Video",
 												   PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE,
 												   "Communication", nullptr);
+
+	m_pwStream = s_pw.pw_stream_new(m_pwCore, "Mumble ScreenShare", props);
+	if (!m_pwStream) {
+		qWarning("ScreenShareCapture: Failed to create PipeWire stream");
+		return false;
+	}
 
 	m_pwEvents          = new pw_stream_events();
 	m_pwEvents->version = PW_VERSION_STREAM_EVENTS;
 	m_pwEvents->process = &ScreenShareCapture::onStreamProcess;
 
-	m_pwStream = s_pw.pw_stream_new_simple(m_pwLoop, "Mumble ScreenShare", props, m_pwEvents, this);
-	if (!m_pwStream) {
-		qWarning("ScreenShareCapture: Failed to create PipeWire stream");
-		return false;
-	}
+	spa_zero(m_pwStreamHook);
+	s_pw.pw_stream_add_listener(m_pwStream, &m_pwStreamHook, m_pwEvents, this);
 
 	// Build the video format parameter.
 	// We accept BGRx and RGBx formats (common for screen capture on Wayland).
@@ -527,33 +563,17 @@ void ScreenShareCapture::onStreamProcess(void *userdata) {
 	// Convert to RGB. We assume BGRx format (most common from screen capture).
 	const uint8_t *src = static_cast< const uint8_t * >(data.data);
 
-	int outW = width;
-	int outH = height;
-
-	// Scale to target resolution if source is larger
-	bool needScale = (width > self->m_targetWidth || height > self->m_targetHeight);
-
 	// .copy() to own the pixel data before we return the PipeWire buffer
 	QImage srcImage = QImage(src, width, height, stride, QImage::Format_RGB32).copy();
-	QImage finalImage;
 
-	if (needScale) {
-		finalImage =
-			srcImage.scaled(self->m_targetWidth, self->m_targetHeight, Qt::KeepAspectRatio, Qt::FastTransformation)
-				.convertToFormat(QImage::Format_RGB888);
-	} else {
-		finalImage = srcImage.convertToFormat(QImage::Format_RGB888);
-	}
+	// Always scale to exact target resolution so the encoder never rejects frames.
+	// IgnoreAspectRatio avoids dimension mismatches for non-16:9 screens.
+	QImage finalImage =
+		srcImage.scaled(self->m_targetWidth, self->m_targetHeight, Qt::IgnoreAspectRatio, Qt::FastTransformation)
+			.convertToFormat(QImage::Format_RGB888);
 
-	outW = finalImage.width();
-	outH = finalImage.height();
-
-	// Ensure dimensions are even (required by VP8 encoder)
-	outW = outW & ~1;
-	outH = outH & ~1;
-	if (outW != finalImage.width() || outH != finalImage.height()) {
-		finalImage = finalImage.copy(0, 0, outW, outH);
-	}
+	int outW = finalImage.width();
+	int outH = finalImage.height();
 
 	QByteArray rgbData(reinterpret_cast< const char * >(finalImage.constBits()), finalImage.sizeInBytes());
 
@@ -598,6 +618,18 @@ void ScreenShareCapture::cleanupPipeWire() {
 		m_pwStream = nullptr;
 	}
 
+	// Disconnect the core (also closes the portal FD it owns)
+	if (m_pwCore) {
+		s_pw.pw_core_disconnect(m_pwCore);
+		m_pwCore = nullptr;
+	}
+
+	// Destroy the context
+	if (m_pwContext) {
+		s_pw.pw_context_destroy(m_pwContext);
+		m_pwContext = nullptr;
+	}
+
 	// Destroy the thread loop
 	if (m_pwThread) {
 		s_pw.pw_thread_loop_destroy(m_pwThread);
@@ -616,6 +648,7 @@ void ScreenShareCapture::cleanupPipeWire() {
 		m_pwEvents = nullptr;
 	}
 
+	// Only close FD if it wasn't transferred to the core
 	if (m_pwFd >= 0) {
 		::close(m_pwFd);
 		m_pwFd = -1;
