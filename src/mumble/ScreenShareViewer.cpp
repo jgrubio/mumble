@@ -11,7 +11,7 @@
 ScreenShareViewer::ScreenShareViewer(const QString &userName, QWidget *parent) : QWidget(parent) {
 	setWindowTitle(tr("Screen Share - %1").arg(userName));
 	setAttribute(Qt::WA_DeleteOnClose);
-	resize(1280, 720);
+	resize(1920, 1080);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->setContentsMargins(0, 0, 0, 0);

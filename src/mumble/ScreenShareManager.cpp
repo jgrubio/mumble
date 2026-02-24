@@ -43,8 +43,8 @@ void ScreenShareManager::startSharing() {
 		return;
 	}
 
-	m_capture = new ScreenShareCapture(1280, 720, 15, this);
-	m_encoder = new ScreenShareEncoder(1280, 720, 15, 1500, this);
+	m_capture = new ScreenShareCapture(1920, 1080, 60, this);
+	m_encoder = new ScreenShareEncoder(1920, 1080, 60, 6000, this);
 
 	if (!m_encoder->init()) {
 		qWarning("ScreenShareManager: Failed to init encoder");
@@ -102,9 +102,9 @@ void ScreenShareManager::onCaptureStarted() {
 	MumbleProto::ScreenShare msg;
 	msg.set_session(Global::get().uiSession);
 	msg.set_active(true);
-	msg.set_width(1280);
-	msg.set_height(720);
-	msg.set_fps(15);
+	msg.set_width(1920);
+	msg.set_height(1080);
+	msg.set_fps(60);
 	Global::get().sh->sendMessage(msg);
 
 	emit sharingStarted();
@@ -149,8 +149,8 @@ void ScreenShareManager::onFrameEncoded(QByteArray encodedData, bool isKeyframe,
 	msg.set_frame_number(frameNumber);
 	msg.set_frame_data(encodedData.constData(), static_cast< size_t >(encodedData.size()));
 	msg.set_is_keyframe(isKeyframe);
-	msg.set_width(1280);
-	msg.set_height(720);
+	msg.set_width(1920);
+	msg.set_height(1080);
 	msg.set_timestamp(static_cast< uint64_t >(QDateTime::currentMSecsSinceEpoch()));
 	Global::get().sh->sendMessage(msg);
 }
