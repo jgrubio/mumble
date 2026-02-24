@@ -28,20 +28,26 @@
 #include <spa/utils/defs.h>
 
 #include <QLibrary>
+#include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
 
 // Video format enum values needed for SPA format negotiation.
-// These are stable ABI values from spa/param/video/format.h which
-// is not bundled in our 3rdparty headers.
+// These must match spa/param/video/raw.h which is not bundled
+// in our 3rdparty headers.  Values from PipeWire 1.2.6 (libspa-0.2-dev).
 enum spa_video_format_subset {
 	SPA_VIDEO_FORMAT_UNKNOWN = 0,
-	SPA_VIDEO_FORMAT_BGRx    = 20,
-	SPA_VIDEO_FORMAT_RGBx    = 4,
-	SPA_VIDEO_FORMAT_RGBA    = 5,
-	SPA_VIDEO_FORMAT_BGRA    = 21,
-	SPA_VIDEO_FORMAT_RGB     = 27,
-	SPA_VIDEO_FORMAT_BGR     = 28,
+	SPA_VIDEO_FORMAT_RGBx    = 7,
+	SPA_VIDEO_FORMAT_BGRx    = 8,
+	SPA_VIDEO_FORMAT_xRGB    = 9,
+	SPA_VIDEO_FORMAT_xBGR    = 10,
+	SPA_VIDEO_FORMAT_RGBA    = 11,
+	SPA_VIDEO_FORMAT_BGRA    = 12,
+	SPA_VIDEO_FORMAT_ARGB    = 13,
+	SPA_VIDEO_FORMAT_ABGR    = 14,
+	SPA_VIDEO_FORMAT_RGB     = 15,
+	SPA_VIDEO_FORMAT_BGR     = 16,
 };
 
 // PipeWire stream flags
@@ -463,11 +469,13 @@ bool ScreenShareCapture::setupPipeWireStream(uint32_t nodeId) {
 		return false;
 	}
 
+	qWarning("ScreenShareCapture: connecting PipeWire context with FD=%d", m_pwFd);
 	m_pwCore = s_pw.pw_context_connect_fd(m_pwContext, m_pwFd, nullptr, 0);
 	if (!m_pwCore) {
-		qWarning("ScreenShareCapture: Failed to connect PipeWire FD");
+		qWarning("ScreenShareCapture: Failed to connect PipeWire FD (errno=%d: %s)", errno, strerror(errno));
 		return false;
 	}
+	qWarning("ScreenShareCapture: PipeWire core connected OK via portal FD");
 	m_pwFd = -1; // FD ownership transferred to PipeWire core
 
 	pw_properties *props = s_pw.pw_properties_new(PW_KEY_APP_NAME, "Mumble", PW_KEY_MEDIA_TYPE, "Video",
@@ -482,6 +490,7 @@ bool ScreenShareCapture::setupPipeWireStream(uint32_t nodeId) {
 
 	m_pwEvents          = new pw_stream_events();
 	m_pwEvents->version = PW_VERSION_STREAM_EVENTS;
+	m_pwEvents->state_changed = &ScreenShareCapture::onStreamStateChanged;
 	m_pwEvents->process = &ScreenShareCapture::onStreamProcess;
 
 	spa_zero(m_pwStreamHook);
@@ -514,12 +523,14 @@ bool ScreenShareCapture::setupPipeWireStream(uint32_t nodeId) {
 
 	const spa_pod *params[] = { formatPod };
 
+	qWarning("ScreenShareCapture: connecting stream to nodeId=%u", nodeId);
 	int ret = s_pw.pw_stream_connect(m_pwStream, PW_DIRECTION_INPUT, nodeId,
 									 PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS, params, 1);
 	if (ret < 0) {
-		qWarning("ScreenShareCapture: pw_stream_connect failed: %d", ret);
+		qWarning("ScreenShareCapture: pw_stream_connect failed: %d (errno=%d: %s)", ret, errno, strerror(errno));
 		return false;
 	}
+	qWarning("ScreenShareCapture: pw_stream_connect returned %d (OK)", ret);
 
 	m_pwThread = s_pw.pw_thread_loop_new_full(m_pwLoop, "Mumble ScreenShare", nullptr);
 	if (!m_pwThread) {
@@ -527,15 +538,32 @@ bool ScreenShareCapture::setupPipeWireStream(uint32_t nodeId) {
 		return false;
 	}
 
+	qWarning("ScreenShareCapture: starting PipeWire thread loop");
 	s_pw.pw_thread_loop_start(m_pwThread);
+	qWarning("ScreenShareCapture: PipeWire thread loop started OK");
 	return true;
 }
 
+void ScreenShareCapture::onStreamStateChanged(void *userdata, enum pw_stream_state old,
+											   enum pw_stream_state state, const char *error) {
+	Q_UNUSED(userdata);
+	qWarning("ScreenShareCapture: PipeWire stream state: %d -> %d (%s)%s%s",
+			 old, state,
+			 state == PW_STREAM_STATE_ERROR ? "ERROR" :
+			 state == PW_STREAM_STATE_UNCONNECTED ? "UNCONNECTED" :
+			 state == PW_STREAM_STATE_CONNECTING ? "CONNECTING" :
+			 state == PW_STREAM_STATE_PAUSED ? "PAUSED" :
+			 state == PW_STREAM_STATE_STREAMING ? "STREAMING" : "UNKNOWN",
+			 error ? " error=" : "", error ? error : "");
+}
+
 void ScreenShareCapture::onStreamProcess(void *userdata) {
+	static int frameCount = 0;
 	auto *self = static_cast< ScreenShareCapture * >(userdata);
 
 	pw_buffer *pwBuf = s_pw.pw_stream_dequeue_buffer(self->m_pwStream);
 	if (!pwBuf) {
+		qWarning("ScreenShareCapture: onStreamProcess called but dequeue returned null");
 		return;
 	}
 
@@ -543,6 +571,8 @@ void ScreenShareCapture::onStreamProcess(void *userdata) {
 	spa_data &data     = spaBuf->datas[0];
 
 	if (!data.data || data.chunk->size == 0) {
+		qWarning("ScreenShareCapture: PW buffer has no data (data=%p, chunk_size=%u)",
+				 data.data, data.chunk ? data.chunk->size : 0);
 		s_pw.pw_stream_queue_buffer(self->m_pwStream, pwBuf);
 		return;
 	}
@@ -554,8 +584,17 @@ void ScreenShareCapture::onStreamProcess(void *userdata) {
 	const int bpp    = 4; // BGRx/RGBx = 4 bytes per pixel
 	const int width  = (stride > 0) ? stride / bpp : 0;
 
+	if (frameCount++ % 30 == 0) {
+		qWarning("ScreenShareCapture: PW frame #%d: stride=%d chunk_size=%u data_type=%u "
+				 "width=%d height=%d data=%p n_datas=%u",
+				 frameCount, stride, data.chunk->size, data.type,
+				 width, height, data.data, spaBuf->n_datas);
+	}
+
 	constexpr int MAX_DIMENSION = 8192;
 	if (width <= 0 || height <= 0 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
+		qWarning("ScreenShareCapture: PW frame rejected: invalid dimensions %dx%d (stride=%d, chunk_size=%u)",
+				 width, height, stride, data.chunk->size);
 		s_pw.pw_stream_queue_buffer(self->m_pwStream, pwBuf);
 		return;
 	}
@@ -589,12 +628,16 @@ void ScreenShareCapture::onStreamProcess(void *userdata) {
 }
 
 void ScreenShareCapture::onFrameTimer() {
+	static int timerTick = 0;
 	QByteArray frame;
 	int w = 0, h = 0;
 
 	{
 		QMutexLocker lock(&m_frameMutex);
 		if (!m_newFrameAvailable) {
+			if (timerTick++ % 45 == 0) {
+				qWarning("ScreenShareCapture: timer tick #%d but no new frame available", timerTick);
+			}
 			return;
 		}
 		frame             = m_latestFrame;
@@ -603,6 +646,9 @@ void ScreenShareCapture::onFrameTimer() {
 		m_newFrameAvailable = false;
 	}
 
+	if (timerTick++ % 30 == 0) {
+		qWarning("ScreenShareCapture: emitting frameCaptured #%d: %dx%d, %lld bytes", timerTick, w, h, (long long)frame.size());
+	}
 	emit frameCaptured(frame, w, h);
 }
 

@@ -16,18 +16,14 @@
 
 #include <cstdint>
 
+#include <pipewire/stream.h>
 #include <spa/utils/hook.h>
 
-struct pw_buffer;
 struct pw_context;
 struct pw_core;
 struct pw_loop;
 struct pw_properties;
-struct pw_stream;
-struct pw_stream_events;
 struct pw_thread_loop;
-struct spa_dict;
-struct spa_pod;
 
 /// Captures the screen using XDG Desktop Portal + PipeWire.
 /// The portal is used to get user consent and a PipeWire node ID,
@@ -65,6 +61,8 @@ private:
 	bool setupPipeWireStream(uint32_t nodeId);
 	void cleanupPipeWire();
 
+	static void onStreamStateChanged(void *userdata, enum pw_stream_state old,
+									 enum pw_stream_state state, const char *error);
 	static void onStreamProcess(void *userdata);
 
 	int m_targetWidth;

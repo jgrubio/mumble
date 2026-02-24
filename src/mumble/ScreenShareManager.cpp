@@ -129,12 +129,21 @@ void ScreenShareManager::onCaptureError(const QString &error) {
 }
 
 void ScreenShareManager::onFrameCaptured(QByteArray rgbFrame, int width, int height) {
+	static int capturedCount = 0;
+	if (capturedCount++ % 30 == 0) {
+		qWarning("ScreenShareManager: onFrameCaptured #%d: %dx%d, %lld bytes", capturedCount, width, height, (long long)rgbFrame.size());
+	}
 	if (m_encoder) {
 		m_encoder->encodeFrame(rgbFrame, width, height);
 	}
 }
 
 void ScreenShareManager::onFrameEncoded(QByteArray encodedData, bool isKeyframe, uint64_t frameNumber) {
+	static int encodedCount = 0;
+	if (encodedCount++ % 30 == 0) {
+		qWarning("ScreenShareManager: onFrameEncoded #%d: frame=%lu, %lld bytes, keyframe=%d",
+				 encodedCount, (unsigned long)frameNumber, (long long)encodedData.size(), isKeyframe);
+	}
 	MumbleProto::ScreenShareFrame msg;
 	msg.set_session(Global::get().uiSession);
 	msg.set_frame_number(frameNumber);
